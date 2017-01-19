@@ -1,0 +1,529 @@
+---
+title: "Prediction of Titanic Survivors: A comparison between statistical models"
+author: "Namrata Deshpande"
+output: html_document
+header-includes:
+- \newcommand{\benum}{\begin{enumerate}}
+- \newcommand{\eenum}{\end{enumerate}}
+- \newcommand{\bitem}{\begin{itemize}}
+- \newcommand{\eitem}{\end{itemize}}
+---
+
+### Abstract ###
+This paper focuses on evaluating the performances of different statistical learning methods for prediction. The models would be fitted over Titanic dataset that contains different variables related to demographics and other information about the passengers along with whether they survived or not. We will fit a particular statistical learning method on a set of training observations and measure its performance on a set of test observations and finally, we would compare these methods using ROC curves.
+
+
+### Setup: ###
+The following R packages are required:
+
+```{r Setup, message=FALSE}
+# Load standard libraries
+library(tidyverse)
+library(gridExtra)
+library(MASS)
+library(pROC)
+library(arm)
+library(randomForest)
+library(xgboost)
+```
+
+### Data: Exploring and Tidying###
+We will use the Titanic dataset provided by University of Washington, Information School for the course of Data Science I. The Titanic dataset contains data about the survival of passengers aboard the Titanic. 
+
+```{r Load data}
+# Load data
+titanic_data <- read.csv('titanic.csv')
+str(titanic_data) # explore data structure
+#cleaning data: casting categorical variable as factors
+titanic_data$survived <- as.factor(titanic_data$survived)
+titanic_data$pclass <- as.factor(titanic_data$pclass)
+
+```
+
+#### Description of Variables ####
+
+* pclass: Passenger Class  (1 = 1st; 2 = 2nd; 3 = 3rd)
+* survived: Survival (0 = No; 1 = Yes) 
+* name : Name
+* sex  :  Sex 
+* age  :  Age
+* sibsp : Number of Siblings/Spouses Aboard 
+* parch : Number of Parents/Children Aboard 
+* ticket : Ticket Number 
+* fare : Passenger Fare 
+* cabin : Cabin 
+* embarked :  Port of Embarkation (C = Cherbourg; Q = Queenstown; S = Southampton) 
+* boat :  Lifeboat 
+* body :  Body Identification Number
+* home.dest  :  Home/Destination 
+
+### Splitting Data ###
+
+When we are trying to understand the data or infer some relationships between variables then splitting the data into smaller samples doesn't make sense as we need as much data as possible for understanding patterns. But when we move into the realm of prediction and try to fit a statistical model in order to predict the different values of events that haven't even occurred yet, then obviously, one of the major concern is the quality and performance of the model. 
+This quality could be assessed when these models are actually used to predict values with data that is yet unseen by the model. Also, comparing them with exact values prediction errors could be calculated. But as we can't get real future data, the best way to test the quality of our model is to split the original dataset and then use one part(training) to create the model and other part to test the model. Hence we would first split our data into training and test datasets in 80-20 ratio.
+
+
+
+```{r dataseperation}
+set.seed(2)
+# 80% of the sample size
+smp_size <- floor(0.80 * nrow(titanic_data))
+#training data index
+train.index <- sample( 1: nrow(titanic_data), size = smp_size)
+#training data
+train <- titanic_data[train.index,]
+#test data: data after filtering out the training data
+test.data <- titanic_data[-train.index ,]
+
+
+```
+
+
+In this paper the goal is to predict the survival of passengers. We will consider different models to do so. 
+
+
+### Logistic Regression Model: ###
+
+#### Model Fitting ####
+
+```{r logistic model}
+#logistic Regression model
+glm.fit <- glm(survived ~ pclass, data = train, family = binomial)
+#summary of fit
+summary(glm.fit)
+#coefficients of the model
+coef(glm.fit)
+
+```
+
+### Bayesian generalized linear Model ###
+
+```{r bayesModel}
+#bayesian model
+bayes.fit <- bayesglm(survived ~ pclass, data = train, family = binomial)
+
+#summary of fit
+summary(bayes.fit)
+#coefficients of the model
+coef(bayes.fit)
+
+```
+
+Both the Bayesian as well as generalized logisitic regression model shows that the significance of a passenger being in lower class is very high (very low p-values for pclass3). The estimated value of coefficient also tells us that being a third class passenger decreases the survival chances by significant amount.
+
+#### Performance Evaluation ####
+
+Next, let's consider the performance of this model. 
+
+We will predict the probabilities that the passenger survived or not for a given value of passenger class. The type = response in predict function will be helpful for this. We would then be using threshold of 0.5, as the class is binary.
+
+```{r testprediction}
+#prediction of probabilities for test values
+glm.probs <- predict(glm.fit, test.data, type = "response")
+#predicting actual values based on probabilities
+yhat <- rep (0 ,nrow(test.data))
+yhat[glm.probs > 0.5] <- 1
+yhat
+
+```
+
+##### Test Error Rate:#####
+
+```{r}
+#creating confusion matrix
+table(yhat , test.data$survived)
+
+#test error rate
+mean(yhat != test.data$survived)
+```
+
+The model has an error rate of about 29.7% as it predicted (144+40) 184 values correclty out of 264. From the confusion matrix it is clear that the number of false positives on test data (when survived = 0  but predicted = 1) is 55.
+
+
+##### ROC Curve:#####
+
+```{r rocplot}
+#roc calculation
+fit.roc <- roc(test.data$survived, yhat, 
+               auc = TRUE, thresholds = 0.5)
+#plotting
+plot(fit.roc, col = "red", legacy.axes = TRUE, 
+main = "ROC curve for Logistic Regression Model")
+```
+
+The ROC curve is the the curve between True Positive Rate vs False Positive rate for the classifier. For better performace we want the true positive rate to be higher and False positive rate to be as low as possible. So we try to form a model for which the ROC curve is as close to the Upper Left corner as possible giving the maximum area under curve value(AUC). The ROC curve in the case of our model has auc of 0.6417 also the Sensitivity (TPR) is not as high as we would like it to be. So, we should improve the model in order to increase its value.
+
+### Data Wrangling ###
+We would use the data to construct a new predictor variable based on a passenger's listed title (i.e. Mr., Mrs., Miss., Master). 
+
+The title given by the passengers include variety of additional information like:
+
+1. The age and sex of passengers. Although we have data for this as seperate columns, a lot of values are missing. Using the title the missing values could be estimated.
+2. The economical background or social status of passengers (as several people used Lady, the Countess, Sir etc. )
+3. The profession of people (Dr, Rev, Capt, Col)
+4. The ethinic background of people. For instance, several people used Mme or Mlle that tells us that these are French people.
+
+Including such information in the model would be very interesting as we can then see the patterns if any present in people who survived or do not survived.
+
+```{r newPredictor, warning=FALSE}
+#creating new function for adding title column
+title.add <- function(dataset){
+df1 <- separate(dataset, name, c('last', 'first'), sep = ',', remove = FALSE)
+df2 <- separate(df1, first, c('title', 'firstName'), sep = '\\.', remove = FALSE)
+#removing whitespaces if any
+df2$title <- gsub("\\s", "", df2$title)
+
+drop <- c('last', 'first', 'firstName')
+df2[ , !(names(df2) %in% drop)]
+return(df2[ , !(names(df2) %in% drop)])
+}
+
+#passing titanic data to function
+new_data <- title.add(titanic_data)
+
+str(new_data)
+
+#unique titles
+unique(new_data$title)
+#number of observations under titles
+group_by(new_data, title) %>% summarize(
+count_title = n())
+
+#handling special cases
+#Variations of Mrs
+new_data$title[new_data$title %in% c('Mme', 'Dona')] <- "Mrs"
+#Variations of Miss, including Ms in this category
+new_data$title[new_data$title %in% c('Mlle', 'Ms')] <- "Miss"
+#new category for lady and similar titles
+new_data$title[new_data$title %in% c('theCountess')] <- "Lady"
+#new category for Sirs and other respected titles
+new_data$title[new_data$title %in% c('Capt', 'Col', 
+                                     'Don', 'Jonkheer', 'Major')] <- "Sir"
+
+#changing to factor
+new_data$title <- as.factor(new_data$title)
+
+
+```
+
+
+### Improved Logistic Regression Model ###
+```{r}
+#creating test and train data from new data with title
+set.seed(22)
+# 80% of the sample size
+smp_size <- floor(0.80 * nrow(new_data))
+#training data index
+train.index <- sample( 1: nrow(new_data), size = smp_size)
+#training data
+train <- new_data[train.index,]
+#test data: data after filtering out the training data
+test.data <- new_data[-train.index ,]
+
+#logistic Regression model
+glm.fit <- glm(survived ~ pclass + title, data = train, family = binomial)
+#summary of fit
+summary(glm.fit)
+#coefficients of the model
+coef(glm.fit)
+
+```
+
+The etimated coefficients for the model tells us that some titles hold significance for the values of survived variable. Hence including those variable would definately improve the model as predictions would be more accurate. This is also proven by the reduced Residual Deviance and AIC value of this model as compared to the previous model. 
+
+### Performance Evaluation ###
+
+##### Test Error Rate and ROC :#####
+```{r}
+#prediction of probabilities for test values
+glm.probs <- predict(glm.fit, test.data, type = "response")
+
+yhat2 <- rep (0 ,nrow(test.data))
+yhat2[glm.probs > 0.5] <- 1
+yhat2
+
+
+#confusion matrix
+table(yhat2 , test.data$survived)
+
+#test error rate
+mean(yhat2 != test.data$survived)
+
+#roc calculation
+fit.roc2 <- roc(test.data$survived, yhat2, 
+                auc = TRUE, thresholds = 0.5)
+#plotting
+plot(fit.roc2, col = "red")
+```
+
+The mean error rate for the model has been reduced from around 30% to around 22% with the new model. From the confusion matrix we can see that out of 262 records, 57 records were classified incorrectly. The ROC curve also denotes somewhat improved Sensitivity and AUC of 0.7728. Although this value cannot be said as very good, it is definately better than the previous model. Let us look into data that has been misclassified
+
+```{r}
+#missclassified values
+test.miss <- test.data
+
+#adding predicted values
+test.miss$predicted <- yhat2
+test.miss$predicted <- as.factor(test.miss$predicted)
+
+#filtering to only misclassified values
+test.miss <- filter(test.miss, survived != predicted)
+
+#titles for which misclassification occured
+group_by(test.miss, title) %>% summarize(
+count_title = n())
+
+#pclass for which misclassification occured
+group_by(test.miss, pclass) %>% summarize(
+count_pclass = n())
+
+```
+
+
+The analysis tells us that most miscalssification occured for people of title "Miss" and "Mr" and pclass 1 and 3. There could be three reasons behind these misclassification:
+
+1. The handling of missing values or aggregation that we did earlier for terms like "Mme", "Mlle" etc. is causing these errors.
+2. There are other predictors that are effecting the values of survived.
+3. The model chosen to fit the data is not suitable for this data.
+
+Although the model is better than the first model that we created but we can try further to reduce the classification error by taking into account other predictors or other models as well.
+
+### Random Forest Model ###
+
+We would now use the randomForest function to fit a random forest model with passenger class and title as predictors and then make predictions for the test set using the random forest model. 
+
+```{r randomForest}
+set.seed(33)
+#fitting random forest model
+
+forest.fit <- randomForest(survived ~ pclass + title, 
+                           data = train, importance =TRUE)
+forest.fit
+
+#importance of variables
+importance(forest.fit)
+
+#predicting test values
+yhat3 <- predict(forest.fit , newdata = test.data)
+
+
+#confusion matrix
+table(yhat3 , test.data$survived)
+
+#test error rate
+mean(yhat3 != test.data$survived)
+
+#roc calculation
+fit.roc3 <- roc(test.data$survived, 
+                as.ordered(yhat3), plot = TRUE)
+
+
+
+```
+
+
+Now we will try to improve our random forest model.
+
+For improving the random forest model we will perform following steps:
+
+1. Adding other probable predictors
+2. Imputing missing values in test and training data by replacing by either mean or mode.
+3. Evaluating Importance of these predictors and removing any umimportant ones.
+4. Finding optimal value of ntree for minimized OOB error.
+5. Finding optimal value of mtry for minimized OOB error.
+
+```{r newRandomForest}
+
+set.seed(33)
+#making a model with probable predictors
+#missing values imputation
+train.imputed <- rfImpute(survived ~ pclass + title +
+                          sex + age + fare, data = train, importance =TRUE)
+#new random forest fit
+new.fit <- randomForest(survived ~ pclass + title +
+                          sex + age + fare, 
+                        data = train.imputed, importance =TRUE)
+
+
+#summary of fit
+new.fit
+
+#importance of variables
+importance(new.fit)
+
+#plot of importance
+varImpPlot(new.fit, main= "Importance of predictors for new Random Forest Model")
+
+
+```
+
+From the analysis above we can see that all the predictors in the new model are important and significant. Hence we will not remove any of them. Also, the OOB error rate of new model has fallen down to 18.34% from 20.34% from previous model. Next we will optimize ntree and mtry parameters.
+
+
+```{r}
+#error rate plot
+layout(matrix(c(1,2),nrow=1), width=c(4,1)) 
+par(mar=c(5,4,4,0)) #No margin on the right side
+plot(new.fit, log="y", main = "Error Rate vs Number of trees")
+par(mar=c(5,0,4,2)) #No margin on the left side
+plot(c(0,1), type="n", axes=F, xlab="", ylab="")
+legend("top", colnames(new.fit$err.rate),col=1:3,cex=0.8,fill=1:3)
+
+
+```
+
+The plot tells us that for ntree between 50 and 60 the OOB error is minimum and then it is almost the same as the number of trees is increasing. SO we will try this value of ntree in our next model and try to find optimized value of mtry.
+
+
+```{r}
+
+set.seed(33)
+#optimize mtry
+mtry <- tuneRF(train.imputed[,c('pclass','title','sex','age','fare')],
+               train.imputed$survived, ntreeTry=50,
+stepFactor=1.5,improve=0.01, trace=TRUE, plot=FALSE)
+
+best.m <- mtry[mtry[, 2] == min(mtry[, 2]), 1]
+
+#optimized mtry for least OOB
+best.m
+
+set.seed(33)
+#final optimized model
+new.fit <- randomForest(survived ~ pclass + title +
+                          sex + age + fare, 
+                        data = train.imputed, importance =TRUE, 
+                        ntree = 62, mtry = 2)
+
+#final model
+new.fit
+
+#replacing missing values with mean
+test.data$age[is.na(test.data$age)] <- mean(test.data$age, na.rm = TRUE)
+
+
+#predicting test values
+yhat4 <- predict(new.fit , newdata = test.data)
+
+#confusion matrix
+table(yhat4 , test.data$survived)
+
+#test error rate
+mean(yhat4 != test.data$survived)
+
+
+#roc calculation
+fit.roc4 <- roc(test.data$survived, as.ordered(yhat4), 
+                threshold = 0.5, plot = TRUE, 
+                auc = TRUE)
+
+
+
+```
+
+The new model has an error rate of 19% which is the lowest for all models.
+
+### Comparison between the Models ### 
+
+Now we will compare the accuracy of each of the models using ROC curves.
+
+```{r RocCurves}
+#plotting roc curves
+plot(fit.roc, legacy.axes = TRUE, main = "ROC curves for all models")
+plot(fit.roc2, legacy.axes = TRUE, add=TRUE, col='red')
+plot(fit.roc3, legacy.axes = TRUE, add=TRUE, col='blue')
+plot(fit.roc4, legacy.axes = TRUE, add=TRUE, col='darkgreen')
+legend("bottomright", lty=c(1,1), lwd=c(2.5,2.5),
+       col=c("black","red", "blue", "darkgreen"),
+       legend= c('Logistic1', 'Logistic2','RF1', 'RF2'))
+```
+
+For a model to be accurate the ROC curve should be focused towards top left corner (High Sensitivity and low FPR ). As seen from the curves random forest models have the leat FPR of all models. Also as we are improving the model the sensitivity is also imcreasing. So, the last RF model have high Sensitivity values than first RF model. Hence, from all the models the optimized random forest model would be the best to predict the survival rates of the passengers.
+
+### Boosted Tree Model: XGBoost ###
+
+Finally, we will explore a gradient boosted tree model, using the `xgboost` package written by your fellow UW student Tianqi Chen. `xgboost` stands for ``Extreme Gradient Boosting'', which is state-of-the-art software known for its fast training time and predictive accuracy.
+The XGB algorithm can only handle numeric data, so first we need to convert all categorical variables to a different representation, such as a sparse matrix.
+
+```{r}
+library(Matrix)
+#converts train set factors to columns
+sparse.matrix.train <- sparse.model.matrix(survived~pclass + sex + title -1, 
+                                           data = train) 
+#converts test set factors to columns
+sparse.matrix.test <-  sparse.model.matrix(survived~pclass + sex + title -1, 
+                                           data = test.data) 
+#output vector to be predicted
+output_vector = train$survived 
+
+
+```
+
+
+
+```{r, results="hide"}
+xgb.model.one <- xgb.cv(data= sparse.matrix.train,     #train sparse matrix
+                       label= as.numeric(output_vector)-1, #output vector to be predicted 
+                       eval.metric = 'logloss', #model minimizes RootMeanSquaredError
+                       objective = "reg:logistic", #regression
+                       nfold = 10,
+                       #tuning parameters
+                       max.depth = 3, #Vary btwn 3-15
+                       eta = 0.05,  #Vary btwn 0.1-0.3
+                       nthread = 5,  #Increase this to improve speed
+                       subsample= 1,  #Vary btwn 0.8-1
+                       colsample_bytree = 0.5,#Vary btwn 0.3-0.8
+                       lambda = 0.5,  #Vary between 0-3
+                       alpha = 0.5, #Vary between 0-3
+                       min_child_weight = 3, #Vary btwn 1-10
+                       nround = 100  #Vary btwn 100-3000 
+                       #based on max.depth, eta,subsample & colsample
+                       )
+plot(data.frame(xgb.model.one)[,1], type='l', col='black', 
+     ylab='CV logloss Error', xlab='# of trees')
+lines(data.frame(xgb.model.one)[,3], type='l', lty=2, col='black')
+```
+
+The above function performs Cross Validation using XGBoost package. Using this function we can tune the parameters of model to minimize the evaluation matrix which here is the Mean Logloss error or Classification Loss error. The function is given the training data in form of sparse matrix. The objective parameter specifies the model to be fitted. The original data is partitioned into nfold number of samples and the cross validation process is repeated for nround of times to generate the most optimized values. By tuning the parameters we can tune the model.
+
+The plot provides the Cross Validation Root Mean Square Error rate vs the number of trees created by model. The solid line gives the Training Logloss Mean error while the dotted line gives the Test Logloss Mean error. The plot tells us that as the number trees increases the logless error both taining as well as test decreases until it becomes almost constant after about 100 trees.This tells us that as we increase the number of trees in the model the accuracy of model will increase.
+
+Now we will modify the code to fit a boosted tree model that allows for 8 levels in each tree and uses a learning rate $\eta=.1$. Then we will compare the two models.
+```{r, results="hide"}
+
+#new model with depth = 8 and eta as 0.1
+xgb.model.two <- xgb.cv(data= sparse.matrix.train, #train sparse matrix
+                       label= as.numeric(output_vector)-1, #output vector to be predicted 
+                       eval.metric = 'logloss', #model minimizes RootMeanSquaredError
+                       objective = "reg:logistic", #regression
+                       nfold = 10,
+                       #tuning parameters
+                       max.depth = 8, #Vary btwn 3-15
+                       eta = 0.1, #Vary btwn 0.1-0.3
+                       nthread = 5, #Increase this to improve speed
+                       subsample= 1,   #Vary btwn 0.8-1
+                       colsample_bytree = 0.5, #Vary btwn 0.3-0.8
+                       lambda = 0.5,  #Vary between 0-3
+                       alpha = 0.5,  #Vary between 0-3
+                       min_child_weight = 3,  #Vary btwn 1-10
+                       nround = 100   #Vary btwn 100-3000 
+                       #based on max.depth, eta,subsample & colsample
+                       )
+
+#inspecting the output
+str(data.frame(xgb.model.two))
+#plotting error curves for the two models to compare
+plot(data.frame(xgb.model.two)[,1], type='l', col='black', 
+     ylab='CV logloss Error', xlab='# of trees', 
+     main = "Logloss errors vs Trees for two xgBoost Models")
+lines(data.frame(xgb.model.two)[,3], type='l', lty=2, col='black')
+lines(data.frame(xgb.model.one)[,1], type='l',  col='blue')
+lines(data.frame(xgb.model.one)[,3], type='l', lty=2, col='blue')
+legend("topright", lty=c(1,1), lwd=c(2.5,2.5),col=c("blue", "black" ),
+       legend= c('xgBoost1', 'xgBoost2'))
+```
+
+The Logless error curves for the two models can be compared using the plot. For the second model we can see that the training as well as the test mean errors falls to 0.45  with only about 20 trees while the first model takes 40 trees (almost double) to reduce the errors to that level. So, obviously the second model is using better optimized parameters and hence we will choose it over the first one.
+
+### References ###
+Data and some content taken from University of Washington, Information School.
