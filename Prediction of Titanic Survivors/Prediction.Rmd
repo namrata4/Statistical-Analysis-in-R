@@ -28,7 +28,7 @@ library(xgboost)
 ```
 
 ### Data: Exploring and Tidying###
-We will use the Titanic dataset provided by University of Washington, Information School for the course of Data Science I. The Titanic dataset contains data about the survival of passengers aboard the Titanic. 
+We will use the Titanic dataset provided by Paul Hendricks (https://github.com/paulhendricks/titanic). The Titanic dataset contains data about the survival of passengers aboard the Titanic. 
 
 ```{r Load data}
 # Load data
@@ -440,90 +440,3 @@ legend("bottomright", lty=c(1,1), lwd=c(2.5,2.5),
 
 For a model to be accurate the ROC curve should be focused towards top left corner (High Sensitivity and low FPR ). As seen from the curves random forest models have the leat FPR of all models. Also as we are improving the model the sensitivity is also imcreasing. So, the last RF model have high Sensitivity values than first RF model. Hence, from all the models the optimized random forest model would be the best to predict the survival rates of the passengers.
 
-### Boosted Tree Model: XGBoost ###
-
-Finally, we will explore a gradient boosted tree model, using the `xgboost` package written by your fellow UW student Tianqi Chen. `xgboost` stands for ``Extreme Gradient Boosting'', which is state-of-the-art software known for its fast training time and predictive accuracy.
-The XGB algorithm can only handle numeric data, so first we need to convert all categorical variables to a different representation, such as a sparse matrix.
-
-```{r}
-library(Matrix)
-#converts train set factors to columns
-sparse.matrix.train <- sparse.model.matrix(survived~pclass + sex + title -1, 
-                                           data = train) 
-#converts test set factors to columns
-sparse.matrix.test <-  sparse.model.matrix(survived~pclass + sex + title -1, 
-                                           data = test.data) 
-#output vector to be predicted
-output_vector = train$survived 
-
-
-```
-
-
-
-```{r, results="hide"}
-xgb.model.one <- xgb.cv(data= sparse.matrix.train,     #train sparse matrix
-                       label= as.numeric(output_vector)-1, #output vector to be predicted 
-                       eval.metric = 'logloss', #model minimizes RootMeanSquaredError
-                       objective = "reg:logistic", #regression
-                       nfold = 10,
-                       #tuning parameters
-                       max.depth = 3, #Vary btwn 3-15
-                       eta = 0.05,  #Vary btwn 0.1-0.3
-                       nthread = 5,  #Increase this to improve speed
-                       subsample= 1,  #Vary btwn 0.8-1
-                       colsample_bytree = 0.5,#Vary btwn 0.3-0.8
-                       lambda = 0.5,  #Vary between 0-3
-                       alpha = 0.5, #Vary between 0-3
-                       min_child_weight = 3, #Vary btwn 1-10
-                       nround = 100  #Vary btwn 100-3000 
-                       #based on max.depth, eta,subsample & colsample
-                       )
-plot(data.frame(xgb.model.one)[,1], type='l', col='black', 
-     ylab='CV logloss Error', xlab='# of trees')
-lines(data.frame(xgb.model.one)[,3], type='l', lty=2, col='black')
-```
-
-The above function performs Cross Validation using XGBoost package. Using this function we can tune the parameters of model to minimize the evaluation matrix which here is the Mean Logloss error or Classification Loss error. The function is given the training data in form of sparse matrix. The objective parameter specifies the model to be fitted. The original data is partitioned into nfold number of samples and the cross validation process is repeated for nround of times to generate the most optimized values. By tuning the parameters we can tune the model.
-
-The plot provides the Cross Validation Root Mean Square Error rate vs the number of trees created by model. The solid line gives the Training Logloss Mean error while the dotted line gives the Test Logloss Mean error. The plot tells us that as the number trees increases the logless error both taining as well as test decreases until it becomes almost constant after about 100 trees.This tells us that as we increase the number of trees in the model the accuracy of model will increase.
-
-Now we will modify the code to fit a boosted tree model that allows for 8 levels in each tree and uses a learning rate $\eta=.1$. Then we will compare the two models.
-```{r, results="hide"}
-
-#new model with depth = 8 and eta as 0.1
-xgb.model.two <- xgb.cv(data= sparse.matrix.train, #train sparse matrix
-                       label= as.numeric(output_vector)-1, #output vector to be predicted 
-                       eval.metric = 'logloss', #model minimizes RootMeanSquaredError
-                       objective = "reg:logistic", #regression
-                       nfold = 10,
-                       #tuning parameters
-                       max.depth = 8, #Vary btwn 3-15
-                       eta = 0.1, #Vary btwn 0.1-0.3
-                       nthread = 5, #Increase this to improve speed
-                       subsample= 1,   #Vary btwn 0.8-1
-                       colsample_bytree = 0.5, #Vary btwn 0.3-0.8
-                       lambda = 0.5,  #Vary between 0-3
-                       alpha = 0.5,  #Vary between 0-3
-                       min_child_weight = 3,  #Vary btwn 1-10
-                       nround = 100   #Vary btwn 100-3000 
-                       #based on max.depth, eta,subsample & colsample
-                       )
-
-#inspecting the output
-str(data.frame(xgb.model.two))
-#plotting error curves for the two models to compare
-plot(data.frame(xgb.model.two)[,1], type='l', col='black', 
-     ylab='CV logloss Error', xlab='# of trees', 
-     main = "Logloss errors vs Trees for two xgBoost Models")
-lines(data.frame(xgb.model.two)[,3], type='l', lty=2, col='black')
-lines(data.frame(xgb.model.one)[,1], type='l',  col='blue')
-lines(data.frame(xgb.model.one)[,3], type='l', lty=2, col='blue')
-legend("topright", lty=c(1,1), lwd=c(2.5,2.5),col=c("blue", "black" ),
-       legend= c('xgBoost1', 'xgBoost2'))
-```
-
-The Logless error curves for the two models can be compared using the plot. For the second model we can see that the training as well as the test mean errors falls to 0.45  with only about 20 trees while the first model takes 40 trees (almost double) to reduce the errors to that level. So, obviously the second model is using better optimized parameters and hence we will choose it over the first one.
-
-### References ###
-Data and some content taken from University of Washington, Information School.
